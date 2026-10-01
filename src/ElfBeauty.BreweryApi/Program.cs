@@ -1,0 +1,103 @@
+using Asp.Versioning;
+using Asp.Versioning.ApiExplorer;
+using ElfBeauty.BreweryApi.Extensions;
+using ElfBeauty.BreweryApi.Middleware;
+using Serilog;
+using Serilog.Events;
+
+var builder = WebApplication.CreateBuilder(args);
+builder.Host.UseSerilog(
+(context, services, configuration) =>
+{
+    configuration.ReadFrom.Configuration(context.Configuration)
+                .ReadFrom.Services(services)
+                .Enrich.FromLogContext()
+                .Enrich.WithProperty("Application", "ElfBeauty.BreweryApi");
+});
+builder.Services.AddControllers();
+builder.Services.AddProblemDetails();
+builder.Services.AddApiVersioning(options =>
+{
+    options.DefaultApiVersion = new ApiVersion(1);
+    options.ApiVersionReader = new UrlSegmentApiVersionReader();
+    options.ReportApiVersions = true;
+}).AddMvc()
+.AddApiExplorer(options =>
+{
+    options.GroupNameFormat = "'v'V";
+    options.SubstituteApiVersionInUrl = true;
+});
+builder.Services.AddDependencies(builder.Configuration);
+builder.Services.AddSwaggerGen();
+
+var app = builder.Build();
+app.UseMiddleware<ExceptionHandlingMiddleware>();
+app.UseSerilogRequestLogging(
+    options =>
+    {
+        options.MessageTemplate =
+            "HTTP {RequestMethod} {RequestPath} " +
+            "responded {StatusCode} in {Elapsed:0.0000} ms";
+
+        options.GetLevel =
+            (
+                httpContext,
+                elapsed,
+                exception) =>
+            {
+                if (exception is not null ||
+                    httpContext.Response.StatusCode >= 500)
+                {
+                    return LogEventLevel.Error;
+                }
+
+                if (httpContext.Response.StatusCode >= 400)
+                {
+                    return LogEventLevel.Warning;
+                }
+
+                return LogEventLevel.Information;
+            };
+
+        options.EnrichDiagnosticContext =
+            (
+                diagnosticContext,
+                httpContext) =>
+            {
+                diagnosticContext.Set(
+                    "RequestHost",
+                    httpContext.Request.Host.Value
+                    ?? string.Empty);
+
+                diagnosticContext.Set(
+                    "RequestScheme",
+                    httpContext.Request.Scheme
+                    ?? string.Empty);
+
+                diagnosticContext.Set(
+                    "TraceId",
+                    httpContext.TraceIdentifier
+                    ?? string.Empty);
+            };
+    });
+app.UseRateLimiter();
+app.UseSwagger();
+var apiVersionDescriptionProvider = app.Services.GetRequiredService<IApiVersionDescriptionProvider>();
+app.UseSwaggerUI(options =>
+{
+    foreach (var description in apiVersionDescriptionProvider.ApiVersionDescriptions.Reverse())
+    {
+        options.SwaggerEndpoint($"/swagger/{description.GroupName}/swagger.json", $"e.l.f. Beauty Brewery API {description.GroupName}");
+    }
+
+    options.RoutePrefix = "swagger";
+});
+app.UseHttpsRedirection();
+app.UseAuthentication();
+app.UseAuthorization();
+app.MapControllers().RequireRateLimiting("BreweryApiPolicy");
+app.MapHealthChecks("/health").AllowAnonymous();
+
+app.Run();
+
+public partial class Program{};
