@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Net;
 using System.Text;
+using ElfBeauty.BreweryApi.Application.Mapping;
 using ElfBeauty.BreweryApi.Domain.Helpers;
 using ElfBeauty.BreweryApi.Domain.Interfaces;
 using ElfBeauty.BreweryApi.Domain.Models;
@@ -18,19 +19,19 @@ public sealed class OpenBreweryClientTests
     [InlineData(
         "name",
         "asc",
-        "sort=type,name:asc")]
+        "sort=type%2Cname%3Aasc")]
     [InlineData(
         "name",
         "desc",
-        "sort=type,name:desc")]
+        "sort=type%2Cname%3Adesc")]
     [InlineData(
         "city",
         "asc",
-        "sort=type,city:asc")]
+        "sort=type%2Ccity%3Aasc")]
     [InlineData(
         "city",
         "desc",
-        "sort=type,city:desc")]
+        "sort=type%2Ccity%3Adesc")]
     public async Task QueryAsync_Sort_BuildsExpectedUri(
         string sortBy,
         string direction,
@@ -104,6 +105,159 @@ public sealed class OpenBreweryClientTests
         Assert.DoesNotContain(
             "sort=",
             uri);
+    }
+
+    [Theory]
+    [InlineData("asc", "Near Brewery", "Far Brewery")]
+    [InlineData("desc", "Far Brewery", "Near Brewery")]
+    public async Task QueryAsync_Distance_RespectsSortDirection(string sortDirection, string firstName, string secondName)
+    {
+        var handler = new TestHttpMessageHandler(_ =>
+            CreateJsonResponse(
+                """
+                [
+                  {
+                    "id": "far",
+                    "name": "Far Brewery",
+                    "brewery_type": "micro",
+                    "city": "Los Angeles",
+                    "state_province": "California",
+                    "postal_code": "90001",
+                    "country": "United States",
+                    "latitude": "34.0522",
+                    "longitude": "-118.2437"
+                  },
+                  {
+                    "id": "near",
+                    "name": "Near Brewery",
+                    "brewery_type": "micro",
+                    "city": "San Diego",
+                    "state_province": "California",
+                    "postal_code": "92101",
+                    "country": "United States",
+                    "latitude": "32.7200",
+                    "longitude": "-117.1600"
+                  }
+                ]
+                """));
+
+        var sut = CreateSut(handler);
+
+        var result = await sut.QueryAsync(
+            new BreweryQuery
+            {
+                SortBy = "distance",
+                SortDirection = sortDirection,
+                Latitude = 32.7157m,
+                Longitude = -117.1611m,
+                Page = 1,
+                PageSize = 50
+            },
+            CancellationToken.None);
+
+        Assert.Equal(firstName, result.Breweries[0].Name);
+        Assert.Equal(secondName, result.Breweries[1].Name);
+    }
+
+    [Theory]
+    [InlineData("asc")]
+    [InlineData("desc")]
+    public async Task QueryAsync_Distance_MissingCoordinates_ReturnsNullDistance(string sortDirection)
+    {
+        var handler = new TestHttpMessageHandler(_ =>
+            CreateJsonResponse(
+                """
+                [
+                  {
+                    "id": "near",
+                    "name": "Near Brewery",
+                    "brewery_type": "micro",
+                    "city": "San Diego",
+                    "state_province": "California",
+                    "postal_code": "92101",
+                    "country": "United States",
+                    "latitude": "32.7200",
+                    "longitude": "-117.1600"
+                  },
+                  {
+                    "id": "missing",
+                    "name": "No Coordinates",
+                    "brewery_type": "brewpub",
+                    "city": "Denver",
+                    "state_province": "Colorado",
+                    "postal_code": "80202",
+                    "country": "United States",
+                    "latitude": null,
+                    "longitude": null
+                  }
+                ]
+                """));
+
+        var sut = CreateSut(handler);
+
+        var result = await sut.QueryAsync(
+            new BreweryQuery
+            {
+                SortBy = "distance",
+                SortDirection = sortDirection,
+                Latitude = 32.7157m,
+                Longitude = -117.1611m,
+                Page = 1,
+                PageSize = 50
+            },
+            CancellationToken.None);
+
+        Assert.Equal("Near Brewery", result.Breweries[0].Name);
+        Assert.Equal("No Coordinates", result.Breweries[1].Name);
+        Assert.NotNull(result.Breweries[0].Distance);
+        Assert.Null(result.Breweries[1].Distance);
+    }
+
+    [Fact]
+    public async Task QueryAsync_EncodesSpecialCharactersInQueryValues()
+    {
+        var handler = new TestHttpMessageHandler(_ =>
+            CreateJsonResponse("[]"));
+
+        var sut = CreateSut(handler);
+
+        await sut.QueryAsync(
+            new BreweryQuery
+            {
+                Name = "A/B & Co",
+                City = "St. Louis",
+                SortBy = "city",
+                SortDirection = "desc",
+                Page = 2,
+                PageSize = 25
+            },
+            CancellationToken.None);
+
+        var uri = handler.LastRequest!.RequestUri!.OriginalString;
+
+        Assert.Contains("by_name=a%2Fb_%26_co", uri, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("by_city=st._louis", uri, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("sort=type%2Ccity%3Adesc", uri, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("page=2", uri, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("per_page=25", uri, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task QueryAsync_SearchOnly_UsesNameFilter()
+    {
+        var handler = new TestHttpMessageHandler(_ => CreateJsonResponse("[]"));
+        var sut = CreateSut(handler);
+
+        await sut.QueryAsync(
+            new BreweryQuery
+            {
+                Search = "Craft Beer",
+                Page = 1,
+                PageSize = 10
+            },
+            CancellationToken.None);
+
+        Assert.Contains("by_name=craft_beer", handler.LastRequest!.RequestUri!.OriginalString);
     }
 
     [Fact]
@@ -302,6 +456,38 @@ public sealed class OpenBreweryClientTests
     }
 
     [Fact]
+    public async Task AutocompleteAsync_MergesMatchingFieldsAndBreweryTypes()
+    {
+        var handler = new TestHttpMessageHandler(_ =>
+            CreateJsonResponse(
+                """
+                [
+                  {
+                    "id": "1",
+                    "name": "Micro House",
+                    "brewery_type": "micro",
+                    "city": "Miami",
+                    "state_province": null,
+                    "state": "Michigan",
+                    "postal_code": "00000",
+                    "country": "United States"
+                  }
+                ]
+                """));
+        var sut = CreateSut(handler);
+
+        var result = await sut.AutocompleteAsync("mi", 4, CancellationToken.None);
+
+        Assert.Equal(4, result.Count);
+        Assert.Contains(result, value => value.Equals("Miami", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(result, value => value.Equals("Michigan", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(result, value => value.Equals("Micro House", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(
+            handler.Requests,
+            request => request.RequestUri!.OriginalString.Contains("by_type=micro", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public void CalculateKilometres_UsesApiAndBreweryCoordinates()
     {
         var sut = new DistanceCalculator();
@@ -373,7 +559,7 @@ private static double ParseDistanceKilometres(string distance)
             };
 
         mapper ??=
-            Mock.Of<IBreweryMapper>();
+            new BreweryMapper();
 
         var logger =
             Mock.Of<

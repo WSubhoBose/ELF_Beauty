@@ -144,7 +144,12 @@ namespace ElfBeauty.BreweryApi.Infrastructure
                 parameters["sort"] = sortValue;
             }
 
-            var queryString = string.Join("&", parameters.Select(parameter => $"{parameter.Key}={parameter.Value}"));
+            var queryString = string.Join(
+                "&",
+                parameters
+                    .Where(parameter => !string.IsNullOrWhiteSpace(parameter.Value))
+                    .Select(parameter => $"{parameter.Key}={Uri.EscapeDataString(parameter.Value!)}"));
+
             return $"breweries?{queryString}";
         }
 
@@ -230,6 +235,7 @@ namespace ElfBeauty.BreweryApi.Infrastructure
         {
             var inputLatitude = query.Latitude!.Value;
             var inputLongitude = query.Longitude!.Value;
+            var isDescending = query.SortDirection?.Equals("desc", StringComparison.OrdinalIgnoreCase) == true;
 
             return breweries.Select(
                     brewery =>
@@ -237,9 +243,12 @@ namespace ElfBeauty.BreweryApi.Infrastructure
                         var distance = GetDistance(brewery, inputLatitude, inputLongitude);
                         return new BreweryWithDistance(brewery, distance);
                     })
-                .OrderBy(item => item.DistanceKilometres ?? double.MaxValue)
+                .OrderBy(item => item.DistanceKilometres.HasValue ? 0 : 1)
+                .ThenBy(
+                    item => item.DistanceKilometres ?? (isDescending ? double.MinValue : double.MaxValue),
+                    isDescending ? Comparer<double>.Create((x, y) => y.CompareTo(x)) : Comparer<double>.Default)
                 .ThenBy(item => item.Brewery.Name, StringComparer.OrdinalIgnoreCase)
-                .Select(item => 
+                .Select(item =>
                         item.Brewery with
                         {
                             Distance = FormatDistance(item.DistanceKilometres)
@@ -257,12 +266,12 @@ namespace ElfBeauty.BreweryApi.Infrastructure
             return string.Concat(distanceKilometres.Value.ToString("0.00", CultureInfo.InvariantCulture), " km");
         }
 
-        private double GetDistance(BreweryResponse brewery, decimal inputLatitude, decimal inputLongitude)
+        private double? GetDistance(BreweryResponse brewery, decimal inputLatitude, decimal inputLongitude)
         {
             if (!brewery.Latitude.HasValue ||
                 !brewery.Longitude.HasValue)
             {
-                return double.MaxValue;
+                return null;
             }
 
             return new DistanceCalculator()

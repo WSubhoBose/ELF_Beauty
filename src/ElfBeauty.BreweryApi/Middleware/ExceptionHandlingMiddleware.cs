@@ -100,7 +100,10 @@ public sealed class ExceptionHandlingMiddleware(RequestDelegate next, ILogger<Ex
 
         problemDetails.Extensions["traceId"] = context.TraceIdentifier;
 
-        await context.Response.WriteAsJsonAsync(problemDetails, cancellationToken: context.RequestAborted);
+        await JsonSerializer.SerializeAsync(
+            context.Response.Body,
+            problemDetails,
+            cancellationToken: context.RequestAborted);
     }
 
     private void LogException(HttpContext context, Exception exception, int statusCode)

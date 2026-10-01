@@ -188,6 +188,36 @@ public sealed class BreweryHelperTests
             query);
     }
 
+    [Theory]
+    [InlineData(-91)]
+    [InlineData(91)]
+    public void Validate_LatitudeOutsideRange_Throws(decimal latitude)
+    {
+        var query = new BreweryQuery
+        {
+            Page = 1,
+            PageSize = 50,
+            Latitude = latitude
+        };
+
+        Assert.Throws<RequestValidationException>(() => BreweryHelper.Validate(query));
+    }
+
+    [Theory]
+    [InlineData(-181)]
+    [InlineData(181)]
+    public void Validate_LongitudeOutsideRange_Throws(decimal longitude)
+    {
+        var query = new BreweryQuery
+        {
+            Page = 1,
+            PageSize = 50,
+            Longitude = longitude
+        };
+
+        Assert.Throws<RequestValidationException>(() => BreweryHelper.Validate(query));
+    }
+
     [Fact]
     public void IsDistanceSort_Distance_ReturnsTrue()
     {
@@ -230,6 +260,13 @@ public sealed class BreweryHelperTests
                     10));
     }
 
+    [Fact]
+    public void ValidateAutocomplete_SingleCharacterTerm_Throws()
+    {
+        Assert.Throws<RequestValidationException>(
+            () => BreweryHelper.ValidateAutocomplete("a", 10));
+    }
+
     [Theory]
     [InlineData(0)]
     [InlineData(-1)]
@@ -242,5 +279,12 @@ public sealed class BreweryHelperTests
                 BreweryHelper.ValidateAutocomplete(
                     "Alpha",
                     limit));
+    }
+
+    [Fact]
+    public void ValidateAutocomplete_LimitAboveMaximum_Throws()
+    {
+        Assert.Throws<RequestValidationException>(
+            () => BreweryHelper.ValidateAutocomplete("Alpha", 21));
     }
 }

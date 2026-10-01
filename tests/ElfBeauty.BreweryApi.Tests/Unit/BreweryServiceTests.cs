@@ -226,6 +226,53 @@ public sealed class BreweryServiceTests
     }
 
     [Fact]
+    public async Task GetAsync_ConcurrentRequestsForSameKey_OnlyQueriesSourceOnce()
+    {
+        var query = CreateQuery(
+            city: "Denver",
+            page: 1,
+            pageSize: 20);
+
+        var response = CreatePagedResponse(
+            query,
+            [
+                BreweryTestData.CreateResponse(
+                    id: "1",
+                    name: "Alpha Brewing",
+                    city: "Denver")
+            ]);
+
+        var release = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var callCount = 0;
+
+        clientMock
+            .Setup(client => client.QueryAsync(
+                query,
+                It.IsAny<CancellationToken>()))
+            .Returns(async () =>
+            {
+                Interlocked.Increment(ref callCount);
+                await release.Task;
+                return response;
+            });
+
+        var sut = CreateSut();
+
+        var firstTask = sut.GetAsync(query, CancellationToken.None);
+        var secondTask = sut.GetAsync(query, CancellationToken.None);
+
+        await Task.Yield();
+        release.SetResult(null);
+
+        var results = await Task.WhenAll(firstTask, secondTask);
+
+        Assert.Equal(2, results.Length);
+        Assert.Same(response, results[0]);
+        Assert.Same(response, results[1]);
+        Assert.Equal(1, Volatile.Read(ref callCount));
+    }
+
+    [Fact]
     public async Task GetAsync_DifferentQueries_UseDifferentCacheEntries()
     {
         var denverQuery = CreateQuery(city: "Denver");
@@ -321,6 +368,87 @@ public sealed class BreweryServiceTests
         Assert.True(found);
         Assert.NotNull(cachedSuggestions);
         Assert.Equal(externalSuggestions, cachedSuggestions);
+    }
+
+    [Fact]
+    public async Task AutocompleteAsync_CacheHit_DoesNotCallSource()
+    {
+        const string term = "brew";
+        const int limit = 10;
+        IReadOnlyList<string> cachedSuggestions = ["Brew House"];
+        cache.Seed(BreweryCacheKey.CreateAutocomplete(term, limit), cachedSuggestions);
+
+        var result = await CreateSut().AutocompleteAsync(term, limit, CancellationToken.None);
+
+        Assert.Same(cachedSuggestions, result);
+        clientMock.Verify(
+            client => client.AutocompleteAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task GetAsync_SourceFailure_DoesNotCacheAndAllowsRetry()
+    {
+        var query = CreateQuery(city: "Denver");
+        var response = CreatePagedResponse(
+            query,
+            [BreweryTestData.CreateResponse(name: "Denver Brewery", city: "Denver")]);
+        var callCount = 0;
+
+        clientMock
+            .Setup(client => client.QueryAsync(query, It.IsAny<CancellationToken>()))
+            .Returns(() =>
+            {
+                if (Interlocked.Increment(ref callCount) == 1)
+                {
+                    return Task.FromException<PagedResponse<BreweryResponse>>(
+                        new HttpRequestException("temporary failure"));
+                }
+
+                return Task.FromResult(response);
+            });
+
+        var sut = CreateSut();
+
+        await Assert.ThrowsAsync<HttpRequestException>(
+            () => sut.GetAsync(query, CancellationToken.None));
+        var result = await sut.GetAsync(query, CancellationToken.None);
+
+        Assert.Same(response, result);
+        Assert.Equal(2, callCount);
+        Assert.True(cache.Contains(BreweryCacheKey.Create(query)));
+    }
+
+    [Fact]
+    public async Task GetAsync_NullSourceResult_IsNotCached()
+    {
+        var query = CreateQuery(city: "Denver");
+        clientMock
+            .Setup(client => client.QueryAsync(query, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((PagedResponse<BreweryResponse>)null!);
+
+        var result = await CreateSut().GetAsync(query, CancellationToken.None);
+
+        Assert.Null(result);
+        Assert.False(cache.Contains(BreweryCacheKey.Create(query)));
+    }
+
+    [Fact]
+    public async Task GetAsync_CacheFilledBetweenInitialChecks_ReturnsNewValue()
+    {
+        var query = CreateQuery(city: "Denver");
+        var expected = CreatePagedResponse(
+            query,
+            [BreweryTestData.CreateResponse(name: "Concurrent Brewery", city: "Denver")]);
+        var changingCache = new CacheHitOnSecondLookup(expected);
+        var sut = new BreweryService(changingCache, clientMock.Object, loggerMock.Object);
+
+        var result = await sut.GetAsync(query, CancellationToken.None);
+
+        Assert.Same(expected, result);
+        clientMock.Verify(
+            client => client.QueryAsync(It.IsAny<BreweryQuery>(), It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 
     [Fact]
@@ -504,6 +632,28 @@ public sealed class BreweryServiceTests
             string key)
         {
             return values.ContainsKey(key);
+        }
+    }
+
+    private sealed class CacheHitOnSecondLookup(PagedResponse<BreweryResponse> response) : IBreweryCache
+    {
+        private int lookupCount;
+
+        public bool TryGet<T>(string key, out T? value)
+        {
+            if (Interlocked.Increment(ref lookupCount) == 2 && response is T typedResponse)
+            {
+                value = typedResponse;
+                return true;
+            }
+
+            value = default;
+            return false;
+        }
+
+        public void Set<T>(string key, T value)
+        {
+            throw new InvalidOperationException("The cached value should avoid a source call.");
         }
     }
 }

@@ -1,11 +1,11 @@
-using System;
+using System.Collections.Concurrent;
 using ElfBeauty.BreweryApi.Domain.Interfaces;
 
 namespace ElfBeauty.BreweryApi.Tests.TestSupport;
 
 public sealed class TestBreweryCache : IBreweryCache
 {
-    private readonly Dictionary<string, object>
+    private readonly ConcurrentDictionary<string, object>
         values =
             new(StringComparer.Ordinal);
 

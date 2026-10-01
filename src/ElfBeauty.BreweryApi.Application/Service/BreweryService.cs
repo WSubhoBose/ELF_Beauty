@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using ElfBeauty.BreweryApi.Domain;
 using ElfBeauty.BreweryApi.Domain.Helpers;
 using ElfBeauty.BreweryApi.Domain.Interfaces;
@@ -8,6 +9,8 @@ namespace ElfBeauty.BreweryApi.Application.Service
 {
     public sealed class BreweryService(IBreweryCache breweryCache, IOpenBreweryClient openBreweryClient, ILogger<BreweryService> logger) : IBreweryService
     {
+        private readonly ConcurrentDictionary<string, SemaphoreSlim> inFlight = new(StringComparer.Ordinal);
+
         public async Task<PagedResponse<BreweryResponse>> GetAsync(BreweryQuery query, CancellationToken cancellationToken)
         {
             BreweryHelper.Validate(query);
@@ -29,11 +32,7 @@ namespace ElfBeauty.BreweryApi.Application.Service
                 "CacheKey: {CacheKey}",
                 cacheKey);
 
-            var response = await openBreweryClient.QueryAsync(query, cancellationToken);
-
-            breweryCache.Set(cacheKey, response);
-
-            return response;
+            return await GetOrCreateAsync(cacheKey, () => openBreweryClient.QueryAsync(query, cancellationToken), cancellationToken);
         }
 
         public async Task<IReadOnlyList<string>> AutocompleteAsync(string term, int limit, CancellationToken cancellationToken)
@@ -50,9 +49,43 @@ namespace ElfBeauty.BreweryApi.Application.Service
 
             logger.LogDebug("Brewery catalogue cache miss for autocomplete.");
 
-            var result = await openBreweryClient.AutocompleteAsync(normalisedTerm, limit, cancellationToken);
-            breweryCache.Set(cacheKey, result);
-            return result;
+            return await GetOrCreateAsync(cacheKey, () => openBreweryClient.AutocompleteAsync(normalisedTerm, limit, cancellationToken), cancellationToken);
+        }
+
+        private async Task<T> GetOrCreateAsync<T>(string cacheKey, Func<Task<T>> factory, CancellationToken cancellationToken)
+            where T : class
+        {
+            if (breweryCache.TryGet<T>(cacheKey, out var cached) && cached is not null)
+            {
+                return cached;
+            }
+
+            var semaphore = inFlight.GetOrAdd(cacheKey, _ => new SemaphoreSlim(1, 1));
+
+            await semaphore.WaitAsync(cancellationToken);
+
+            try
+            {
+                if (breweryCache.TryGet<T>(cacheKey, out cached) && cached is not null)
+                {
+                    return cached;
+                }
+
+                var value = await factory();
+
+                if (value is null)
+                {
+                    return null!;
+                }
+
+                breweryCache.Set(cacheKey, value);
+                return value;
+            }
+            finally
+            {
+                semaphore.Release();
+                inFlight.TryRemove(new KeyValuePair<string, SemaphoreSlim>(cacheKey, semaphore));
+            }
         }
     }
 }

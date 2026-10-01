@@ -1,8 +1,7 @@
 # e.l.f. Beauty Brewery API
 
-The e.l.f. Beauty Brewery API is a .NET 9 REST API backed by Open Brewery DB. It supports bounded listing, search, name and city filtering, name/city/distance ordering, pagination, logical multi-field autocomplete, query-specific in-memory caching, structured logging, rate limiting, resilient HTTP communication, API versioning, and RFC 7807-style error responses.
+This repository contains a .NET 9 API for searching and browsing breweries from Open Brewery DB. It supports filtering, pagination, name/city/distance sorting, autocomplete, and query-specific caching. Requests fetch only the requested page; the API does not load the full brewery catalogue.
 
-The API processes only the result set required for the current request. It does not download the complete brewery catalogue during a user request.
 
 ## Technology stack
 
@@ -19,7 +18,7 @@ The API processes only the result set required for the current request. It does 
 
 ## SDK selection
 
-The repository uses a .NET 9 baseline while allowing later .NET 9 feature bands:
+The `global.json` file selects .NET 9.0.100 and rolls forward to later .NET 9 feature bands:
 
 ```json
 {
@@ -31,11 +30,33 @@ The repository uses a .NET 9 baseline while allowing later .NET 9 feature bands:
 }
 ```
 
-This allows compatible installed .NET 9 SDKs such as later 9.0 feature bands to build and run the solution.
+Install a .NET 9 SDK to build and run the solution.
+
+## Test commands
+
+Run the full test suite from the repository root:
+
+```bash
+dotnet test "ElfBeauty.BreweryApi.slnx" --nologo
+```
+
+To run only the test project:
+
+```bash
+dotnet test tests/ElfBeauty.BreweryApi.Tests/ElfBeauty.BreweryApi.Tests.csproj --nologo
+```
+
+To collect code coverage:
+
+```bash
+dotnet test "ElfBeauty.BreweryApi.slnx" --nologo --collect:"Code Coverage"
+```
+
+The collector writes a `.coverage` file under `tests/ElfBeauty.BreweryApi.Tests/TestResults`. The coverage goal is at least 98% for production code; test data and test-support helpers are not part of that measurement.
 
 ## Architecture
 
-The solution uses a layered architecture with separate API, Application, Domain, Infrastructure, and Test responsibilities.
+The code is split into API, Application, Domain, Infrastructure, and Tests projects. A request moves through the API middleware and controller into the application service, which uses domain validation and the infrastructure cache/client:
 
 ```text
 HTTP request
@@ -66,27 +87,16 @@ IBreweryService / BreweryService
 
 ### Responsibility boundaries
 
-- `BreweriesV1Controller` owns routing, model binding, and delegation for the v1 API surface.
-- `BreweryService` validates requests, creates cache keys, checks the cache, calls the external client on a cache miss, and stores bounded responses.
-- `BreweryMemoryCache` stores typed values by deterministic key with ten-minute absolute expiration.
-- `OpenBreweryClient` builds bounded source requests, deserialises source DTOs, maps responses, performs multi-field autocomplete queries, and applies local distance calculation to returned distance-query results.
-- `BreweryMapper` transforms `SourceBrewery` into `BreweryResponse`.
-- `DistanceCalculator` calculates the distance between caller-supplied coordinates and brewery coordinates using the Haversine-style formula implemented in the domain helper.
-- `ExceptionHandlingMiddleware` returns safe Problem Details responses and logs failures.
-- Serilog records one structured request-completion event per request.
+- `BreweriesV1Controller` handles routing and model binding, then delegates to `BreweryService`.
+- `BreweryService` validates requests, builds cache keys, and calls the external client when a result is not cached.
+- `BreweryMemoryCache` stores typed results by query key for ten minutes.
+- `OpenBreweryClient` calls Open Brewery DB, maps its responses, queries autocomplete fields, and calculates distances for returned breweries.
+- `BreweryMapper` maps the upstream model to the API response. `DistanceCalculator` calculates distances from the requested coordinates.
+- `ExceptionHandlingMiddleware` converts known failures into Problem Details responses. Serilog records request and application events.
 
 ## Design patterns and techniques
 
-The implementation uses eight principal patterns and techniques:
-
-1. Layered Architecture
-2. Dependency Injection
-3. Dependency Inversion
-4. Typed Client / Adapter
-5. Query-specific Cache-Aside
-6. Mapper
-7. Options
-8. Middleware
+The layers communicate through interfaces registered with dependency injection. The API uses a typed `HttpClient` for Open Brewery DB, a mapper for upstream responses, and options classes for configuration.
 
 ## API endpoints
 
@@ -114,9 +124,9 @@ GET /api/v1/breweries
 GET /api/v1/breweries/autocomplete?term=den&limit=10
 ```
 
-The public endpoint accepts only `term` and `limit`. The caller does not select a field.
+Autocomplete accepts a `term` and `limit`; the caller does not need to choose a field.
 
-The term is searched logically across supported fields in the code behind:
+The API searches the term across:
 
 - brewery name;
 - city;
@@ -125,13 +135,7 @@ The term is searched logically across supported fields in the code behind:
 - postal code;
 - brewery type where applicable.
 
-The client performs bounded source queries for supported Open Brewery DB filters, combines candidate values, removes duplicates case-insensitively, orders the values consistently, and applies the requested limit.
-
-The response remains:
-
-```csharp
-Task<IReadOnlyList<string>>
-```
+The client combines results from bounded upstream queries, removes duplicate values without regard to case, sorts them consistently, and applies the requested limit.
 
 Example:
 
@@ -194,7 +198,7 @@ curl -k "$BASE_URL/api/v1/breweries?sortBy=city&sortDirection=desc&page=1&pageSi
 curl -k "$BASE_URL/api/v1/breweries?sortBy=distance&latitude=32.7157&longitude=-117.1611&page=1&pageSize=50"
 ```
 
-Open Brewery DB receives `by_dist=latitude,longitude` to select a bounded proximity-based result set. For every returned brewery with valid coordinates, the API independently calculates the distance between the input coordinates and the brewery coordinates using the Haversine formula.
+Open Brewery DB receives `by_dist=latitude,longitude` and returns a bounded set of nearby breweries. The API calculates the distance for each result with usable coordinates, then applies the requested sort direction.
 
 ```text
 API latitude/longitude
@@ -204,7 +208,7 @@ Haversine calculation
 brewery latitude/longitude
 ```
 
-The bounded page is ordered from nearest to farthest. Breweries without usable coordinates are placed after breweries with valid coordinates.
+Breweries without usable coordinates are placed after those with valid coordinates and have a `null` distance.
 
 The response includes a formatted distance:
 
@@ -280,7 +284,7 @@ by_dist=32.7157,-117.1611
 
 User-controlled values are trimmed and URL encoded so reserved characters remain part of one parameter value. Sort fields and directions come from validated values. Coordinates use invariant culture. Query parameters are emitted explicitly as `key=value` pairs.
 
-If both `search` and `name` are supplied, the code applies `name` last and therefore gives it precedence in the final external query. This matches the current `BuildQueryParameters` implementation in the infrastructure client.
+If both `search` and `name` are supplied, `name` takes precedence in the upstream query.
 
 ## Pagination metadata
 
@@ -320,7 +324,7 @@ Example:
 }
 ```
 
-The middleware distinguishes validation failures, malformed downstream JSON, unavailable external services, timeouts, cancellations, and unexpected failures. Problem Details bodies are serialised directly while preserving the `application/problem+json` media type.
+The middleware maps validation errors, malformed upstream JSON, unavailable services, timeouts, cancellations, and unexpected exceptions to appropriate responses. Error responses use the `application/problem+json` media type.
 
 ## Rate limiting
 
@@ -410,14 +414,14 @@ Swagger endpoints:
 
 ### Unit tests
 
-- `BreweryServiceTests` verifies query-specific cache hits, bounded misses, distinct entries for different queries, and autocomplete caching.
+- `BreweryServiceTests` verifies query-specific cache hits, bounded misses, distinct entries for different queries, autocomplete caching, same-key concurrent requests, cache re-checks, and recovery after upstream failures.
 - `BreweryCacheKeyTests` verifies key normalisation and inclusion of all response-changing parameters.
 - `BreweryHelperTests` verifies request and autocomplete validation.
 - `BreweryMapperTests` verifies source mapping and nullable behaviour.
 - `BreweryMemoryCacheTests` verifies typed cache operations and guards.
 - `HaversineDistanceCalculatorTests` verifies distance calculations using caller and brewery coordinates.
-- `OpenBreweryClientTests` verifies bounded pagination, encoding, name/city sorting, `by_dist`, local nearest-first ordering, formatted kilometre output, missing-coordinate ordering, logical multi-field autocomplete, response mapping, and downstream failures.
-- `ExceptionHandlingMiddlewareTests` verifies status mapping, safe details, trace IDs, and Problem Details media types.
+- `OpenBreweryClientTests` verifies bounded pagination, encoded query values, name/city sorting, `by_dist`, ascending/descending distance ordering, null distances for missing coordinates, logical multi-field and brewery-type autocomplete, response mapping, and downstream failures.
+- `ExceptionHandlingMiddlewareTests` verifies status mapping for known and unexpected failures, safe details, trace IDs, request cancellation, already-started responses, and Problem Details media types.
 
 ### Integration tests
 
@@ -435,7 +439,7 @@ Prerequisites:
 ```bash
 dotnet restore
 dotnet build --configuration Release
-dotnet test --configuration Release
+dotnet test "ElfBeauty.BreweryApi.slnx" --configuration Release --nologo
 dotnet run --project src/ElfBeauty.BreweryApi
 ```
 
