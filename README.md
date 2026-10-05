@@ -383,6 +383,10 @@ Swagger endpoints:
 /swagger/v1/swagger.json
 ```
 
+## Authentication
+
+Authentication is intentionally not implemented. The API exposes public Open Brewery DB data, and all V1 brewery endpoints allow anonymous access. Add an authentication and authorization scheme before using this API to protect private data or internal operations.
+
 ## Configuration
 
 ```json

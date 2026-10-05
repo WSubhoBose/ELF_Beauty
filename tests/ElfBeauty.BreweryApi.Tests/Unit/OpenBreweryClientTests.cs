@@ -535,18 +535,18 @@ public sealed class OpenBreweryClientTests
                 });
     }
 
-private static double ParseDistanceKilometres(string distance)
-{
-    var numericValue =
-        distance.Replace(
-            " km",
-            string.Empty,
-            StringComparison.OrdinalIgnoreCase);
+    private static double ParseDistanceKilometres(string distance)
+    {
+        var numericValue =
+            distance.Replace(
+                " km",
+                string.Empty,
+                StringComparison.OrdinalIgnoreCase);
 
-    return double.Parse(
-        numericValue,
-        CultureInfo.InvariantCulture);
-}
+        return double.Parse(
+            numericValue,
+            CultureInfo.InvariantCulture);
+    }
 
     private static OpenBreweryClient CreateSut(HttpMessageHandler handler, IBreweryMapper? mapper = null)
     {

@@ -12,6 +12,7 @@ using System.Threading.RateLimiting;
 
 namespace ElfBeauty.BreweryApi.Extensions
 {
+    /// <summary>Registers the brewery API's application and infrastructure dependencies.</summary>
     public static class RegisterDependencies
     {
         /// <summary>

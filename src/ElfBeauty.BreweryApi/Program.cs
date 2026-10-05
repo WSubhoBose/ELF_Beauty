@@ -1,5 +1,6 @@
 using Asp.Versioning;
 using Asp.Versioning.ApiExplorer;
+using ElfBeauty.BreweryApi.Domain.Models;
 using ElfBeauty.BreweryApi.Extensions;
 using ElfBeauty.BreweryApi.Middleware;
 using Serilog;
@@ -28,7 +29,11 @@ builder.Services.AddApiVersioning(options =>
     options.SubstituteApiVersionInUrl = true;
 });
 builder.Services.AddDependencies(builder.Configuration);
-builder.Services.AddSwaggerGen();
+builder.Services.AddSwaggerGen(options =>
+{
+    options.IncludeXmlComments(Path.ChangeExtension(typeof(Program).Assembly.Location, ".xml"));
+    options.IncludeXmlComments(Path.ChangeExtension(typeof(BreweryQuery).Assembly.Location, ".xml"));
+});
 
 var app = builder.Build();
 app.UseMiddleware<ExceptionHandlingMiddleware>();
@@ -100,4 +105,5 @@ app.MapHealthChecks("/health").AllowAnonymous();
 
 app.Run();
 
-public partial class Program{};
+/// <summary>Entry point for the Brewery API application.</summary>
+public partial class Program { };

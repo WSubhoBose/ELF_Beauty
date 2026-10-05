@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
+using Polly.Timeout;
 using Xunit;
 
 namespace ElfBeauty.BreweryApi.Tests.Unit;
@@ -17,7 +18,11 @@ public sealed class ExceptionHandlingMiddlewareTests
         [new ArgumentException("invalid"), StatusCodes.Status400BadRequest, "Invalid request", "One or more request parameters are invalid."],
         [new JsonException("invalid json"), StatusCodes.Status502BadGateway, "Invalid external response", "Open Brewery DB returned an invalid response."],
         [new HttpRequestException("unavailable"), StatusCodes.Status503ServiceUnavailable, "External service unavailable", "Open Brewery DB is currently unavailable."],
+        [new HttpRequestException("upstream rejected request", null, HttpStatusCode.BadRequest), StatusCodes.Status502BadGateway, "External service rejected request", "Open Brewery DB rejected the request."],
+        [new HttpRequestException("upstream unavailable", null, HttpStatusCode.ServiceUnavailable), StatusCodes.Status503ServiceUnavailable, "External service unavailable", "Open Brewery DB is currently unavailable."],
         [new TimeoutException("late"), StatusCodes.Status504GatewayTimeout, "External service timeout", "Open Brewery DB did not respond within the expected time."],
+        [new TimeoutRejectedException("resilience timeout"), StatusCodes.Status504GatewayTimeout, "External service timeout", "Open Brewery DB did not respond within the expected time."],
+        [new TaskCanceledException("upstream timed out"), StatusCodes.Status504GatewayTimeout, "External service timeout", "Open Brewery DB did not respond within the expected time."],
         [new InvalidOperationException("unexpected"), StatusCodes.Status500InternalServerError, "Unexpected error", "An unexpected error occurred while processing the request."]
     ];
 
