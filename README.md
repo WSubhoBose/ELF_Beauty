@@ -98,6 +98,10 @@ IBreweryService / BreweryService
 
 The layers communicate through interfaces registered with dependency injection. The API uses a typed `HttpClient` for Open Brewery DB, a mapper for upstream responses, and options classes for configuration.
 
+## Persistence and cache design
+
+This assignment does not implement a database, EF Core, or migrations. Open Brewery DB remains the source of brewery data; the API requests only the requested page and caches each successful query response in process for ten minutes. This avoids downloading and persisting the full catalogue for a read-only proxy API. Cache expiration triggers a fresh upstream request on the next matching query. A persistent store or distributed cache would be a separate production requirement, not an implemented feature.
+
 ## API endpoints
 
 ### List, search, filter, sort, and paginate
@@ -422,7 +426,7 @@ Authentication is intentionally not implemented. The API exposes public Open Bre
 - `BreweryCacheKeyTests` verifies key normalisation and inclusion of all response-changing parameters.
 - `BreweryHelperTests` verifies request and autocomplete validation.
 - `BreweryMapperTests` verifies source mapping and nullable behaviour.
-- `BreweryMemoryCacheTests` verifies typed cache operations and guards.
+- `BreweryMemoryCacheTests` verifies typed cache operations, guards, and the configured ten-minute absolute expiration.
 - `HaversineDistanceCalculatorTests` verifies distance calculations using caller and brewery coordinates.
 - `OpenBreweryClientTests` verifies bounded pagination, encoded query values, name/city sorting, `by_dist`, ascending/descending distance ordering, null distances for missing coordinates, logical multi-field and brewery-type autocomplete, response mapping, and downstream failures.
 - `ExceptionHandlingMiddlewareTests` verifies status mapping for known and unexpected failures, safe details, trace IDs, request cancellation, already-started responses, and Problem Details media types.

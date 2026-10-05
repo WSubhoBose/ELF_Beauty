@@ -22,8 +22,12 @@ namespace ElfBeauty.BreweryApi.Extensions
         {
             services.AddOptions<OpenBrewerySourceOptions>()
                     .Bind(configuration.GetSection(OpenBrewerySourceOptions.SectionName))
-                    .Validate(options => Uri.TryCreate(options.BaseUrl, UriKind.Absolute, out _), "OpenBreweryDb:BaseUrl must be a valid absolute URL.")
-                    .Validate(options => options.TimeoutSeconds > 0, "OpenBreweryDb:TimeoutSeconds must be greater than zero.")
+                    .ValidateDataAnnotations()
+                    .Validate(
+                        options =>
+                            Uri.TryCreate(options.BaseUrl, UriKind.Absolute, out var uri) &&
+                            (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps),
+                        "OpenBrewerySource:BaseUrl must be an absolute HTTP or HTTPS URL.")
                     .ValidateOnStart();
 
             services.AddOptions<CacheOptions>()

@@ -41,7 +41,6 @@ namespace ElfBeauty.BreweryApi.Infrastructure
 
         /// <summary>
         /// Retrieves brewery-name suggestions directly from Open Brewery DB.
-        /// This method does not save the returned data to the database.
         /// </summary>
         public async Task<IReadOnlyList<string>> AutocompleteAsync(string term, int limit, CancellationToken cancellationToken)
         {

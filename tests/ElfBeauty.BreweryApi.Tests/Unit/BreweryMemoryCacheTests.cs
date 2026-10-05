@@ -68,6 +68,24 @@ public sealed class BreweryMemoryCacheTests : IDisposable
         Assert.Throws<ArgumentNullException>(() => sut.Set<BreweryResponse>("breweries:test", null!));
     }
 
+    [Fact]
+    public void Set_UsesConfiguredAbsoluteExpiration()
+    {
+        var entry = new Mock<ICacheEntry>();
+        var memoryCache = new Mock<IMemoryCache>();
+        memoryCache
+            .Setup(cache => cache.CreateEntry(It.IsAny<object>()))
+            .Returns(entry.Object);
+        var options = Options.Create(new CacheOptions { BreweryExpirationMinutes = 10 });
+        var sut = new BreweryMemoryCache(memoryCache.Object, options);
+
+        sut.Set("breweries:test", BreweryTestData.CreateResponse(name: "Alpha Brewing"));
+
+        entry.VerifySet(
+            cacheEntry => cacheEntry.AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(10),
+            Times.Once);
+    }
+
     private BreweryMemoryCache CreateSut()
     {
         var options =

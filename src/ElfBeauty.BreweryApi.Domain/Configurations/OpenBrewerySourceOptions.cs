@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using Microsoft.Extensions.Options;
 
 namespace ElfBeauty.BreweryApi.Domain.Configurations
 {
@@ -20,6 +21,7 @@ namespace ElfBeauty.BreweryApi.Domain.Configurations
         public int RetryDelaySeconds { get; init; } = 2;
 
         [Required]
+        [ValidateObjectMembers]
         public CircuitBreakerOptions CircuitBreaker { get; init; } = new();
     }
 }

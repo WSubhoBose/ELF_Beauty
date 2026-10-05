@@ -5,8 +5,7 @@ namespace ElfBeauty.BreweryApi.Domain.Interfaces
     public interface IBreweryService
     {
         /// <summary>
-        /// Retrieves breweries from the database when it is available and fresh.
-        /// Falls back to Open Brewery DB when database connectivity is unavailable.
+        /// Retrieves a page of breweries from Open Brewery DB, using the query cache when available.
         /// </summary>
         Task<PagedResponse<BreweryResponse>> GetAsync(BreweryQuery query, CancellationToken cancellationToken);
 

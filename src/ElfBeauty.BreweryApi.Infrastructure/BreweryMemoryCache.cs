@@ -8,8 +8,6 @@ namespace ElfBeauty.BreweryApi.Infrastructure
 {
     public sealed class BreweryMemoryCache(IMemoryCache memoryCache, IOptions<CacheOptions> options) : IBreweryCache
     {
-        private const string CacheKey = "brewery:catalogue:v1";
-
         public bool TryGet<T>(string key, out T? value)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(key);
