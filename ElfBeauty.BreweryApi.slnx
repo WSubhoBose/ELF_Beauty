@@ -1,0 +1,7 @@
+<Solution>
+  <Project Path="src/ElfBeauty.BreweryApi.Domain/ElfBeauty.BreweryApi.Domain.csproj" />
+  <Project Path="src/ElfBeauty.BreweryApi.Infrastructure/ElfBeauty.BreweryApi.Infrastructure.csproj" />
+  <Project Path="src/ElfBeauty.BreweryApi.Application/ElfBeauty.BreweryApi.Application.csproj" />
+  <Project Path="src/ElfBeauty.BreweryApi/ElfBeauty.BreweryApi.csproj" />
+  <Project Path="tests/ElfBeauty.BreweryApi.Tests/ElfBeauty.BreweryApi.Tests.csproj" />
+</Solution>
