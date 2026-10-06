@@ -2,7 +2,7 @@ using ElfBeauty.BreweryApi.Domain;
 using ElfBeauty.BreweryApi.Domain.Helpers;
 using ElfBeauty.BreweryApi.Domain.Interfaces;
 using ElfBeauty.BreweryApi.Domain.Models;
-using ElfBeauty.BreweryApi.Infrastructure.Entities;
+using ElfBeauty.BreweryApi.Domain.Entities;
 using Microsoft.Extensions.Logging;
 using System.Globalization;
 using System.Net.Http.Json;

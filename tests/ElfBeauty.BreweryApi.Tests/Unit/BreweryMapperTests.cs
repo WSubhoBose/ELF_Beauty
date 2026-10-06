@@ -1,5 +1,5 @@
 using ElfBeauty.BreweryApi.Application.Mapping;
-using ElfBeauty.BreweryApi.Infrastructure.Entities;
+using ElfBeauty.BreweryApi.Domain.Entities;
 using Moq;
 using Xunit;
 

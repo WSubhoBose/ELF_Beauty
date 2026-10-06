@@ -1,5 +1,5 @@
 using ElfBeauty.BreweryApi.Domain.Models;
-using ElfBeauty.BreweryApi.Infrastructure.Entities;
+using ElfBeauty.BreweryApi.Domain.Entities;
 
 namespace ElfBeauty.BreweryApi.Domain
 {

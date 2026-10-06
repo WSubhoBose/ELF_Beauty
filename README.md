@@ -16,21 +16,9 @@ This repository contains a .NET 9 API for searching and browsing breweries from 
 - Serilog and `ILogger<T>`
 - xUnit, Moq, and `WebApplicationFactory<Program>`
 
-## SDK selection
+## SDK
 
-The `global.json` file selects .NET 9.0.100 and rolls forward to later .NET 9 feature bands:
-
-```json
-{
-  "sdk": {
-    "version": "9.0.100",
-    "rollForward": "latestFeature",
-    "allowPrerelease": false
-  }
-}
-```
-
-Install a .NET 9 SDK to build and run the solution.
+The solution targets .NET 9. Install a .NET 9 SDK (9.0.100 or later) to build and run it.
 
 ## Test commands
 
@@ -65,7 +53,7 @@ ExceptionHandlingMiddleware
     ↓
 Serilog request logging
     ↓
-Global per-client rate limiting
+Global fixed-window rate limiting (shared quota)
     ├── permitted → continue
     └── rejected  → HTTP 429 Problem Details
     ↓
@@ -88,8 +76,8 @@ IBreweryService / BreweryService
 ### Responsibility boundaries
 
 - `BreweriesV1Controller` handles routing and model binding, then delegates to `BreweryService`.
-- `BreweryService` validates requests, builds cache keys, and calls the external client when a result is not cached.
-- `BreweryMemoryCache` stores typed results by query key for ten minutes.
+- `BreweryService` validates requests, builds query-specific cache keys, and calls the external client when a result is not cached.
+- `BreweryMemoryCache` stores each typed query result under its own key with the configured absolute expiration (ten minutes by default).
 - `OpenBreweryClient` calls Open Brewery DB, maps its responses, queries autocomplete fields, and calculates distances for returned breweries.
 - `BreweryMapper` maps the upstream model to the API response. `DistanceCalculator` calculates distances from the requested coordinates.
 - `ExceptionHandlingMiddleware` converts known failures into Problem Details responses. Serilog records request and application events.
@@ -100,7 +88,7 @@ The layers communicate through interfaces registered with dependency injection. 
 
 ## Persistence and cache design
 
-This assignment does not implement a database, EF Core, or migrations. Open Brewery DB remains the source of brewery data; the API requests only the requested page and caches each successful query response in process for ten minutes. This avoids downloading and persisting the full catalogue for a read-only proxy API. Cache expiration triggers a fresh upstream request on the next matching query. A persistent store or distributed cache would be a separate production requirement, not an implemented feature.
+This assignment does not implement a database, EF Core, or migrations. Open Brewery DB remains the source of brewery data; the API requests only the requested page and caches each successful query response in process for the configured absolute expiration (ten minutes by default). This avoids downloading and persisting the full catalogue for a read-only proxy API. The cache is per query, not a catalogue-wide snapshot or refresh schedule: a different uncached query can call Open Brewery DB immediately, even while another query's result is cached. After an entry expires, the next request matching that key makes a fresh upstream request. There is no scheduled refresh. A persistent store or distributed cache would be a separate production requirement, not an implemented feature.
 
 ## API endpoints
 
@@ -238,7 +226,7 @@ Numeric distance values are used internally for ordering. Formatting is applied 
 
 ## Query-specific caching
 
-The cache stores bounded API responses rather than the complete external catalogue.
+The cache stores bounded API responses rather than the complete external catalogue. Each brewery query's page and each autocomplete result are cached independently; this does not cache or refresh the catalogue as one unit.
 
 ```text
 Request
@@ -253,14 +241,14 @@ cache lookup
                  ↓
               map and enrich response
                  ↓
-              cache for ten minutes
+              cache under this key for the configured absolute expiration
                  ↓
               return response
 ```
 
-A brewery-query key includes all response-changing values: search, name, city, sort field, sort direction, latitude, longitude, page, and page size. Autocomplete uses a separate key containing the normalised term and limit.
+A brewery-query key includes all response-changing values: search, name, city, sort field, sort direction, latitude, longitude, page, and page size. Autocomplete uses a separate key containing the normalised term and limit. Each entry's absolute expiration is measured from when that response is cached; the default `BreweryExpirationMinutes` is 10.
 
-Different parameters produce different entries. Repeating the same semantic request reuses its cached response.
+Different parameter values produce different entries, so a new query key can trigger a source API call without waiting for other entries to expire. Repeating the same semantic request reuses its cached response until that entry expires. Concurrent requests for the same key share a single in-flight source request, but this coordination is also per key. There is no catalogue-wide cache or guarantee that the source API is called only once in each ten-minute period.
 
 ```json
 {
@@ -332,7 +320,7 @@ The middleware maps validation errors, malformed upstream JSON, unavailable serv
 
 ## Rate limiting
 
-The API uses a global fixed-window limiter for the controller pipeline. Requests share the same quota window across the API, and when the limit is exceeded the application responds with HTTP 429 Problem Details.
+The API uses a global fixed-window limiter for the controller pipeline. All callers share the same quota window; the limiter is not partitioned per client. When the limit is exceeded, the application responds with HTTP 429 and a JSON error body in a Problem Details-style shape.
 
 ```json
 {
@@ -357,8 +345,8 @@ A rejected response includes:
 
 - HTTP 429;
 - `Retry-After`;
-- `application/problem+json`;
-- a safe Problem Details body with a trace ID.
+- `application/json`;
+- a safe JSON error body with a trace ID.
 
 The health endpoint is explicitly excluded from the quota.
 
@@ -423,19 +411,18 @@ Authentication is intentionally not implemented. The API exposes public Open Bre
 ### Unit tests
 
 - `BreweryServiceTests` verifies query-specific cache hits, bounded misses, distinct entries for different queries, autocomplete caching, same-key concurrent requests, cache re-checks, and recovery after upstream failures.
-- `BreweryCacheKeyTests` verifies key normalisation and inclusion of all response-changing parameters.
 - `BreweryHelperTests` verifies request and autocomplete validation.
 - `BreweryMapperTests` verifies source mapping and nullable behaviour.
 - `BreweryMemoryCacheTests` verifies typed cache operations, guards, and the configured ten-minute absolute expiration.
-- `HaversineDistanceCalculatorTests` verifies distance calculations using caller and brewery coordinates.
 - `OpenBreweryClientTests` verifies bounded pagination, encoded query values, name/city sorting, `by_dist`, ascending/descending distance ordering, null distances for missing coordinates, logical multi-field and brewery-type autocomplete, response mapping, and downstream failures.
+- `OpenBrewerySourceOptionsTests` verifies validation rejects invalid retry and circuit-breaker settings.
 - `ExceptionHandlingMiddlewareTests` verifies status mapping for known and unexpected failures, safe details, trace IDs, request cancellation, already-started responses, and Problem Details media types.
 
 ### Integration tests
 
 `WebApplicationFactory<Program>` exercises routing, middleware, controllers, validation, caching, autocomplete, sorting, health checks, and rate limiting. The external network boundary is replaced with `TestOpenBreweryClient` and controlled data.
 
-Rate-limiting integration coverage verifies that requests 1 through 60 from the same caller are permitted and request 61 returns HTTP 429 with `Retry-After` and `application/problem+json`.
+Rate-limiting integration coverage verifies that requests 1 through 60 from the same caller are permitted and request 61 returns HTTP 429 with `Retry-After` and `application/json`.
 
 ## Build and run
 
@@ -461,7 +448,7 @@ Quality settings:
 
 ## Scalability considerations
 
-Every user request processes a bounded result set instead of downloading the complete external catalogue. Query-specific entries reduce cold-request latency and bound per-entry memory use.
+Every user request processes a bounded result set instead of downloading the complete external catalogue. Query-specific entries reduce cold-request latency and bound per-entry memory use, but distinct uncached queries may each call the source API during the same ten-minute interval.
 
 For larger deployments:
 

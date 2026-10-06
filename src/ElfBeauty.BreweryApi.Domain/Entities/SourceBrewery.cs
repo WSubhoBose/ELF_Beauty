@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace ElfBeauty.BreweryApi.Infrastructure.Entities
+namespace ElfBeauty.BreweryApi.Domain.Entities
 {
     public sealed class SourceBrewery
     {

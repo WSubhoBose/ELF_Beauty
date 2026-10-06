@@ -98,8 +98,6 @@ app.UseSwaggerUI(options =>
     options.RoutePrefix = "swagger";
 });
 app.UseHttpsRedirection();
-app.UseAuthentication();
-app.UseAuthorization();
 app.MapControllers().RequireRateLimiting("BreweryApiPolicy");
 app.MapHealthChecks("/health").AllowAnonymous();
 
